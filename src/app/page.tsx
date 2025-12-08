@@ -1,8 +1,6 @@
 'use client';
 
 import * as tf from '@tensorflow/tfjs';
-import type { MobileNet } from '@tensorflow-models/mobilenet';
-import * as mobilenet from '@tensorflow-models/mobilenet';
 import { useState, useEffect, useRef } from 'react';
 import Image from 'next/image';
 import { Button } from '@/components/ui/button';
@@ -24,7 +22,6 @@ import {
   BrainCircuit,
   Lightbulb,
   AlertCircle,
-  Sparkles,
 } from 'lucide-react';
 import { getAccuracyTips, getFlowerSummary } from './actions';
 import {
@@ -33,14 +30,20 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from '@/components/ui/accordion';
+import { FLOWER_CLASSES } from '@/lib/flower-classes';
 
 type Prediction = {
   className: string;
   probability: number;
 };
 
+// Model configuration
+const MODEL_URL = 'https://tfhub.dev/google/tfjs-model/inaturalist/inception_v3/feature_vector/5/default/1';
+const IMAGE_SIZE = 299;
+
+
 export default function Home() {
-  const [model, setModel] = useState<MobileNet | null>(null);
+  const [model, setModel] = useState<tf.GraphModel | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [predictions, setPredictions] = useState<Prediction[]>([]);
   const [loading, setLoading] = useState<{
@@ -60,7 +63,7 @@ export default function Home() {
         setLoading({ model: true, classifying: false, summary: false });
         setError(null);
         await tf.ready();
-        const loadedModel = await mobilenet.load();
+        const loadedModel = await tf.loadGraphModel(MODEL_URL, { fromTFHub: true });
         setModel(loadedModel);
       } catch (err) {
         console.error(err);
@@ -95,8 +98,24 @@ export default function Home() {
       setLoading((prev) => ({ ...prev, classifying: true, summary: true }));
       setError(null);
       try {
-        const results = await model.classify(imageRef.current);
+        const imageElement = imageRef.current;
+        const tensor = tf.browser.fromPixels(imageElement).resizeBilinear([IMAGE_SIZE, IMAGE_SIZE]).toFloat().expandDims(0).div(255.0);
+        
+        const modelPredictions = model.predict(tensor) as tf.Tensor;
+        const topPredictions = await tf.topk(modelPredictions, 5);
+
+        const topProbs = await topPredictions.values.data();
+        const topIndices = await topPredictions.indices.data();
+        
+        const results: Prediction[] = [];
+        for (let i = 0; i < topIndices.length; i++) {
+          results.push({
+            className: FLOWER_CLASSES[topIndices[i]],
+            probability: topProbs[i],
+          });
+        }
         setPredictions(results);
+
         if (results.length > 0) {
           const topPrediction = results[0].className.split(',')[0];
           fetchAccuracyTips(topPrediction);
@@ -158,14 +177,9 @@ export default function Home() {
         className="w-full max-w-2xl mx-auto mb-8"
       >
         <AccordionItem value="item-1">
-          <AccordionTrigger>What can FloraFind identify?</AccordionTrigger>
+          <AccordionTrigger>How accurate is FloraFind?</AccordionTrigger>
           <AccordionContent className="text-muted-foreground">
-            FloraFind uses a general-purpose model that recognizes many common
-            objects, including popular flowers like daisies, roses, sunflowers,
-            and tulips. It works best with clear, close-up photos where the
-            flower is the main subject. It may not identify rare, exotic, or very
-            specific varieties, and it provides common names, not scientific
-            ones.
+            FloraFind uses a powerful AI model trained specifically on thousands of flower images to provide high-accuracy identifications. It works best with clear, close-up photos where the flower is the main subject. While it's highly accurate, it might occasionally misidentify very rare or similar-looking species.
           </AccordionContent>
         </AccordionItem>
       </Accordion>
@@ -193,6 +207,7 @@ export default function Home() {
                     className="object-contain"
                     onLoad={classifyImage}
                     unoptimized
+                    crossOrigin="anonymous"
                   />
                 ) : (
                   <p className="text-muted-foreground">
@@ -209,7 +224,7 @@ export default function Home() {
                   <Loader className="mr-2 animate-spin" />
                 )}
                 {loading.model
-                  ? 'Loading Model...'
+                  ? 'Loading AI Model...'
                   : loading.classifying
                   ? 'Analyzing...'
                   : 'Upload Image'}
