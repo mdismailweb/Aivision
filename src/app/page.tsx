@@ -10,6 +10,7 @@ import {
   Card,
   CardContent,
   CardDescription,
+  CardFooter,
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
@@ -23,8 +24,9 @@ import {
   BrainCircuit,
   Lightbulb,
   AlertCircle,
+  Sparkles,
 } from 'lucide-react';
-import { getAccuracyTips } from './actions';
+import { getAccuracyTips, getFlowerSummary } from './actions';
 import {
   Accordion,
   AccordionContent,
@@ -44,16 +46,18 @@ export default function Home() {
   const [loading, setLoading] = useState<{
     model: boolean;
     classifying: boolean;
-  }>({ model: true, classifying: false });
+    summary: boolean;
+  }>({ model: true, classifying: false, summary: false });
   const [error, setError] = useState<string | null>(null);
   const [tips, setTips] = useState<string[]>([]);
+  const [summary, setSummary] = useState<string>('');
   const imageRef = useRef<HTMLImageElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const loadModel = async () => {
       try {
-        setLoading({ model: true, classifying: false });
+        setLoading({ model: true, classifying: false, summary: false });
         setError(null);
         await tf.ready();
         const loadedModel = await mobilenet.load();
@@ -81,44 +85,60 @@ export default function Home() {
       setImageUrl(url);
       setPredictions([]);
       setTips([]);
+      setSummary('');
       setError(null);
     }
   };
 
   const classifyImage = async () => {
     if (model && imageRef.current) {
-      setLoading({ model: false, classifying: true });
+      setLoading((prev) => ({ ...prev, classifying: true, summary: true }));
       setError(null);
       try {
         const results = await model.classify(imageRef.current);
         setPredictions(results);
         if (results.length > 0) {
-          fetchAccuracyTips(results[0].className);
+          const topPrediction = results[0].className.split(',')[0];
+          fetchAccuracyTips(topPrediction);
+          fetchFlowerSummary(topPrediction);
         }
       } catch (err) {
         console.error(err);
         setError('Failed to classify the image. Please try a different image.');
         setPredictions([]);
       } finally {
-        setLoading({ model: false, classifying: false });
+        setLoading((prev) => ({ ...prev, classifying: false }));
       }
     }
   };
 
   const fetchAccuracyTips = async (flowerType: string) => {
     try {
-      const { tips } = await getAccuracyTips(flowerType.split(',')[0]);
+      const { tips } = await getAccuracyTips(flowerType);
       setTips(tips);
     } catch (err) {
       console.error('Failed to fetch accuracy tips:', err);
       // Non-critical, so we don't show an error to the user
     }
   };
+  
+  const fetchFlowerSummary = async (flowerName: string) => {
+    setLoading((prev) => ({ ...prev, summary: true }));
+    try {
+      const { summary } = await getFlowerSummary(flowerName);
+      setSummary(summary);
+    } catch (err) {
+      console.error('Failed to fetch flower summary:', err);
+    } finally {
+      setLoading((prev) => ({ ...prev, summary: false }));
+    }
+  };
+
 
   const triggerFileInput = () => {
     fileInputRef.current?.click();
   };
-  
+
   return (
     <main className="container mx-auto p-4 md:p-8">
       <div className="flex flex-col items-center text-center mb-8">
@@ -132,11 +152,20 @@ export default function Home() {
         </p>
       </div>
 
-      <Accordion type="single" collapsible className="w-full max-w-2xl mx-auto mb-8">
+      <Accordion
+        type="single"
+        collapsible
+        className="w-full max-w-2xl mx-auto mb-8"
+      >
         <AccordionItem value="item-1">
           <AccordionTrigger>What can FloraFind identify?</AccordionTrigger>
           <AccordionContent className="text-muted-foreground">
-            FloraFind uses a general-purpose model that recognizes many common objects, including popular flowers like daisies, roses, sunflowers, and tulips. It works best with clear, close-up photos where the flower is the main subject. It may not identify rare, exotic, or very specific varieties, and it provides common names, not scientific ones.
+            FloraFind uses a general-purpose model that recognizes many common
+            objects, including popular flowers like daisies, roses, sunflowers,
+            and tulips. It works best with clear, close-up photos where the
+            flower is the main subject. It may not identify rare, exotic, or very
+            specific varieties, and it provides common names, not scientific
+            ones.
           </AccordionContent>
         </AccordionItem>
       </Accordion>
@@ -207,7 +236,7 @@ export default function Home() {
                 Top matches for your uploaded image.
               </CardDescription>
             </CardHeader>
-            <CardContent className="min-h-[150px] flex flex-col justify-center">
+            <CardContent>
               {loading.model ? (
                 <div className="flex flex-col items-center justify-center text-muted-foreground p-4 text-center">
                   <Loader className="mb-2 animate-spin" />
@@ -230,24 +259,41 @@ export default function Home() {
                           {(pred.probability * 100).toFixed(1)}%
                         </p>
                       </div>
-                      <Progress value={pred.probability * 100} className="h-2" />
+                      <Progress
+                        value={pred.probability * 100}
+                        className="h-2"
+                      />
                     </div>
                   ))}
                 </div>
               ) : error ? (
                 <Alert variant="destructive" className="mt-4">
-                    <AlertCircle className="h-4 w-4" />
+                  <AlertCircle className="h-4 w-4" />
                   <AlertTitle>Error</AlertTitle>
                   <AlertDescription>{error}</AlertDescription>
                 </Alert>
               ) : (
-                 <p className="text-center text-muted-foreground p-8">
-                    Upload an image to see predictions.
-                  </p>
+                <p className="text-center text-muted-foreground p-8">
+                  Upload an image to see predictions.
+                </p>
               )}
             </CardContent>
-          </Card>
+            {summary && !loading.summary && (
+              <CardFooter className="bg-muted/50 p-4 border-t">
+                 <p className="text-sm text-muted-foreground">{summary}</p>
+              </CardFooter>
+            )}
+            {loading.summary && (
+                <CardFooter className="bg-muted/50 p-4 border-t">
+                  <div className="flex items-center text-sm text-muted-foreground">
+                    <Loader className="mr-2 animate-spin" />
+                    <span>Generating flower summary...</span>
+                  </div>
+                </CardFooter>
+            )}
 
+          </Card>
+           
           {tips.length > 0 && (
             <Card className="shadow-lg animate-in fade-in duration-500">
               <CardHeader>
