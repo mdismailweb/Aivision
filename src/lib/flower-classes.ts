@@ -1,3 +1,5 @@
+// These classes are not used by the MobileNet model, but are kept for reference
+// in case a different flower-specific model is used in the future.
 export const FLOWER_CLASSES: { [classIndex: number]: string } = {
   0: 'pink primrose',
   1: 'hard-leaved pocket orchid',

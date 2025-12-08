@@ -30,7 +30,9 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from '@/components/ui/accordion';
+import * as mobilenet from '@tensorflow-models/mobilenet';
 import { FLOWER_CLASSES } from '@/lib/flower-classes';
+
 
 type Prediction = {
   className: string;
@@ -38,12 +40,11 @@ type Prediction = {
 };
 
 // Model configuration
-const MODEL_URL = 'https://tfhub.dev/google/tfjs-model/inaturalist/inception_v3/feature_vector/5/default/1';
-const IMAGE_SIZE = 299;
+const IMAGE_SIZE = 224;
 
 
 export default function Home() {
-  const [model, setModel] = useState<tf.GraphModel | null>(null);
+  const [model, setModel] = useState<mobilenet.MobileNet | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [predictions, setPredictions] = useState<Prediction[]>([]);
   const [loading, setLoading] = useState<{
@@ -63,7 +64,7 @@ export default function Home() {
         setLoading({ model: true, classifying: false, summary: false });
         setError(null);
         await tf.ready();
-        const loadedModel = await tf.loadGraphModel(MODEL_URL, { fromTFHub: true });
+        const loadedModel = await mobilenet.load();
         setModel(loadedModel);
       } catch (err) {
         console.error(err);
@@ -99,25 +100,13 @@ export default function Home() {
       setError(null);
       try {
         const imageElement = imageRef.current;
-        const tensor = tf.browser.fromPixels(imageElement).resizeBilinear([IMAGE_SIZE, IMAGE_SIZE]).toFloat().expandDims(0).div(255.0);
         
-        const modelPredictions = model.predict(tensor) as tf.Tensor;
-        const topPredictions = await tf.topk(modelPredictions, 5);
-
-        const topProbs = await topPredictions.values.data();
-        const topIndices = await topPredictions.indices.data();
+        const modelPredictions = await model.classify(imageElement);
         
-        const results: Prediction[] = [];
-        for (let i = 0; i < topIndices.length; i++) {
-          results.push({
-            className: FLOWER_CLASSES[topIndices[i]],
-            probability: topProbs[i],
-          });
-        }
-        setPredictions(results);
+        setPredictions(modelPredictions);
 
-        if (results.length > 0) {
-          const topPrediction = results[0].className.split(',')[0];
+        if (modelPredictions.length > 0) {
+          const topPrediction = modelPredictions[0].className.split(',')[0];
           fetchAccuracyTips(topPrediction);
           fetchFlowerSummary(topPrediction);
         }
