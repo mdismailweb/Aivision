@@ -30,7 +30,6 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from '@/components/ui/accordion';
-import * as mobilenet from '@tensorflow-models/mobilenet';
 import { FLOWER_CLASSES } from '@/lib/flower-classes';
 
 
@@ -40,11 +39,12 @@ type Prediction = {
 };
 
 // Model configuration
+const MODEL_URL = 'https://tfhub.dev/google/aiy/vision/classifier/inaturalist_V1/1';
 const IMAGE_SIZE = 224;
 
 
 export default function Home() {
-  const [model, setModel] = useState<mobilenet.MobileNet | null>(null);
+  const [model, setModel] = useState<tf.GraphModel | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [predictions, setPredictions] = useState<Prediction[]>([]);
   const [loading, setLoading] = useState<{
@@ -64,7 +64,7 @@ export default function Home() {
         setLoading({ model: true, classifying: false, summary: false });
         setError(null);
         await tf.ready();
-        const loadedModel = await mobilenet.load();
+        const loadedModel = await tf.loadGraphModel(MODEL_URL, { fromTFHub: true });
         setModel(loadedModel);
       } catch (err) {
         console.error(err);
@@ -96,27 +96,43 @@ export default function Home() {
 
   const classifyImage = async () => {
     if (model && imageRef.current) {
-      setLoading((prev) => ({ ...prev, classifying: true, summary: true }));
-      setError(null);
-      try {
-        const imageElement = imageRef.current;
-        
-        const modelPredictions = await model.classify(imageElement);
-        
-        setPredictions(modelPredictions);
+        setLoading((prev) => ({ ...prev, classifying: true, summary: true }));
+        setError(null);
+        try {
+            const imageElement = imageRef.current;
+            
+            // Preprocess the image
+            let tensor = tf.browser.fromPixels(imageElement).resizeBilinear([IMAGE_SIZE, IMAGE_SIZE]).toFloat();
+            const offset = tf.scalar(127.5);
+            tensor = tensor.sub(offset).div(offset).expandDims();
 
-        if (modelPredictions.length > 0) {
-          const topPrediction = modelPredictions[0].className.split(',')[0];
-          fetchAccuracyTips(topPrediction);
-          fetchFlowerSummary(topPrediction);
+            // Classify the image
+            const modelPredictions = await model.predict(tensor) as tf.Tensor;
+            const probabilities = await modelPredictions.data();
+            
+            // Get top 5 predictions
+            const top5 = Array.from(probabilities)
+              .map((p, i) => ({
+                probability: p as number,
+                className: FLOWER_CLASSES[i] || 'unknown'
+              }))
+              .sort((a, b) => b.probability - a.probability)
+              .slice(0, 5);
+
+            setPredictions(top5);
+
+            if (top5.length > 0) {
+                const topPrediction = top5[0].className.split(',')[0];
+                fetchAccuracyTips(topPrediction);
+                fetchFlowerSummary(topPrediction);
+            }
+        } catch (err) {
+            console.error(err);
+            setError('Failed to classify the image. Please try a different image.');
+            setPredictions([]);
+        } finally {
+            setLoading((prev) => ({ ...prev, classifying: false }));
         }
-      } catch (err) {
-        console.error(err);
-        setError('Failed to classify the image. Please try a different image.');
-        setPredictions([]);
-      } finally {
-        setLoading((prev) => ({ ...prev, classifying: false }));
-      }
     }
   };
 
