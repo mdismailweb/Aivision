@@ -1,6 +1,7 @@
 'use client';
 
 import * as tf from '@tensorflow/tfjs';
+import * as tflite from '@tensorflow/tfjs-tflite';
 import { useState, useEffect, useRef } from 'react';
 import Image from 'next/image';
 import { Button } from '@/components/ui/button';
@@ -30,21 +31,22 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from '@/components/ui/accordion';
-import { FLOWER_CLASSES } from '@/lib/flower-classes';
 
+// Import Plants V1 logic (TFLite)
+import {
+  loadPlantsModel,
+  preprocessImagePlants,
+  getPlantsPredictions
+} from '@/lib/plants-v1';
+import { getCommonName } from '@/lib/inaturalist-labels';
 
 type Prediction = {
   className: string;
   probability: number;
 };
 
-// Model configuration
-const MODEL_URL = 'https://tfhub.dev/google/aiy/vision/classifier/inaturalist_V1/1';
-const IMAGE_SIZE = 224;
-
-
 export default function Home() {
-  const [model, setModel] = useState<tf.GraphModel | null>(null);
+  const [model, setModel] = useState<tflite.TFLiteModel | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [predictions, setPredictions] = useState<Prediction[]>([]);
   const [loading, setLoading] = useState<{
@@ -64,12 +66,16 @@ export default function Home() {
         setLoading({ model: true, classifying: false, summary: false });
         setError(null);
         await tf.ready();
-        const loadedModel = await tf.loadGraphModel(MODEL_URL, { fromTFHub: true });
+
+        // Load Plants V1 Model (TFLite)
+        const loadedModel = await loadPlantsModel();
         setModel(loadedModel);
+
+        console.log('Plants V1 model loaded successfully for offline use');
       } catch (err) {
         console.error(err);
         setError(
-          'Failed to load the model. Please check your connection and try again.'
+          'Failed to load the Plants V1 model. Please check your internet connection. We are loading a specialized flower model.'
         );
       } finally {
         setLoading((prevState) => ({ ...prevState, model: false }));
@@ -96,43 +102,34 @@ export default function Home() {
 
   const classifyImage = async () => {
     if (model && imageRef.current) {
-        setLoading((prev) => ({ ...prev, classifying: true, summary: true }));
-        setError(null);
-        try {
-            const imageElement = imageRef.current;
-            
-            // Preprocess the image
-            let tensor = tf.browser.fromPixels(imageElement).resizeBilinear([IMAGE_SIZE, IMAGE_SIZE]).toFloat();
-            const offset = tf.scalar(127.5);
-            tensor = tensor.sub(offset).div(offset).expandDims();
+      setLoading((prev) => ({ ...prev, classifying: true, summary: true }));
+      setError(null);
+      try {
+        const imageElement = imageRef.current;
 
-            // Classify the image
-            const modelPredictions = await model.predict(tensor) as tf.Tensor;
-            const probabilities = await modelPredictions.data();
-            
-            // Get top 5 predictions
-            const top5 = Array.from(probabilities)
-              .map((p, i) => ({
-                probability: p as number,
-                className: FLOWER_CLASSES[i] || 'unknown'
-              }))
-              .sort((a, b) => b.probability - a.probability)
-              .slice(0, 5);
+        // Preprocess image for Plants V1 (224x224, 0-1 range)
+        const tensor = preprocessImagePlants(imageElement);
 
-            setPredictions(top5);
+        // Get predictions
+        const top5 = await getPlantsPredictions(model, tensor);
 
-            if (top5.length > 0) {
-                const topPrediction = top5[0].className.split(',')[0];
-                fetchAccuracyTips(topPrediction);
-                fetchFlowerSummary(topPrediction);
-            }
-        } catch (err) {
-            console.error(err);
-            setError('Failed to classify the image. Please try a different image.');
-            setPredictions([]);
-        } finally {
-            setLoading((prev) => ({ ...prev, classifying: false }));
+        // Clean up input tensor
+        tensor.dispose();
+
+        setPredictions(top5);
+
+        if (top5.length > 0) {
+          const topPrediction = top5[0].className.split(',')[0];
+          fetchAccuracyTips(topPrediction);
+          fetchFlowerSummary(topPrediction);
         }
+      } catch (err) {
+        console.error(err);
+        setError('Failed to classify the image. Please try a different image.');
+        setPredictions([]);
+      } finally {
+        setLoading((prev) => ({ ...prev, classifying: false }));
+      }
     }
   };
 
@@ -142,10 +139,9 @@ export default function Home() {
       setTips(tips);
     } catch (err) {
       console.error('Failed to fetch accuracy tips:', err);
-      // Non-critical, so we don't show an error to the user
     }
   };
-  
+
   const fetchFlowerSummary = async (flowerName: string) => {
     setLoading((prev) => ({ ...prev, summary: true }));
     try {
@@ -157,7 +153,6 @@ export default function Home() {
       setLoading((prev) => ({ ...prev, summary: false }));
     }
   };
-
 
   const triggerFileInput = () => {
     fileInputRef.current?.click();
@@ -171,8 +166,10 @@ export default function Home() {
           FloraFind
         </h1>
         <p className="text-muted-foreground mt-2 max-w-2xl">
-          Upload a picture of a flower, and our AI will identify it for you. It
-          all happens right in your browser!
+          Upload a picture of a flower, and our offline AI will identify it for you.
+        </p>
+        <p className="text-sm font-medium text-primary mt-2">
+          Supports 2,100+ plant species (iNaturalist)
         </p>
       </div>
 
@@ -184,7 +181,7 @@ export default function Home() {
         <AccordionItem value="item-1">
           <AccordionTrigger>How accurate is FloraFind?</AccordionTrigger>
           <AccordionContent className="text-muted-foreground">
-            FloraFind uses a powerful AI model trained specifically on thousands of flower images to provide high-accuracy identifications. It works best with clear, close-up photos where the flower is the main subject. While it's highly accurate, it might occasionally misidentify very rare or similar-looking species.
+            FloraFind uses the Google Plants V1 model, trained specifically on over 2,100 plant species from iNaturalist. It works best with clear, close-up photos.
           </AccordionContent>
         </AccordionItem>
       </Accordion>
@@ -229,10 +226,10 @@ export default function Home() {
                   <Loader className="mr-2 animate-spin" />
                 )}
                 {loading.model
-                  ? 'Loading AI Model...'
+                  ? 'Loading Plants Model...'
                   : loading.classifying
-                  ? 'Analyzing...'
-                  : 'Upload Image'}
+                    ? 'Identifying Species...'
+                    : 'Upload Image'}
               </Button>
               <Input
                 ref={fileInputRef}
@@ -260,21 +257,26 @@ export default function Home() {
               {loading.model ? (
                 <div className="flex flex-col items-center justify-center text-muted-foreground p-4 text-center">
                   <Loader className="mb-2 animate-spin" />
-                  <span>Loading classification model...</span>
+                  <span>Loading specialized plants model...</span>
                 </div>
               ) : loading.classifying ? (
                 <div className="flex flex-col items-center justify-center text-muted-foreground p-4 text-center">
                   <Loader className="mb-2 animate-spin" />
-                  <span>Analyzing your flower...</span>
+                  <span>Identifying species...</span>
                 </div>
               ) : predictions.length > 0 ? (
                 <div className="space-y-4">
                   {predictions.slice(0, 5).map((pred, index) => (
                     <div key={index} className="space-y-1">
                       <div className="flex justify-between items-baseline">
-                        <p className="font-medium capitalize text-card-foreground">
-                          {pred.className.split(',')[0]}
-                        </p>
+                        <div>
+                          <p className="font-medium text-card-foreground">
+                            {getCommonName(pred.className) || pred.className}
+                          </p>
+                          <p className="text-xs text-muted-foreground italic">
+                            {pred.className}
+                          </p>
+                        </div>
                         <p className="text-sm font-mono text-muted-foreground">
                           {(pred.probability * 100).toFixed(1)}%
                         </p>
@@ -300,20 +302,20 @@ export default function Home() {
             </CardContent>
             {summary && !loading.summary && (
               <CardFooter className="bg-muted/50 p-4 border-t">
-                 <p className="text-sm text-muted-foreground">{summary}</p>
+                <p className="text-sm text-muted-foreground">{summary}</p>
               </CardFooter>
             )}
             {loading.summary && (
-                <CardFooter className="bg-muted/50 p-4 border-t">
-                  <div className="flex items-center text-sm text-muted-foreground">
-                    <Loader className="mr-2 animate-spin" />
-                    <span>Generating flower summary...</span>
-                  </div>
-                </CardFooter>
+              <CardFooter className="bg-muted/50 p-4 border-t">
+                <div className="flex items-center text-sm text-muted-foreground">
+                  <Loader className="mr-2 animate-spin" />
+                  <span>Generating summary...</span>
+                </div>
+              </CardFooter>
             )}
 
           </Card>
-           
+
           {tips.length > 0 && (
             <Card className="shadow-lg animate-in fade-in duration-500">
               <CardHeader>

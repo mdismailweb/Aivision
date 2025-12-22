@@ -1,31 +1,35 @@
 'use server';
 
-import { generateAccuracyTips } from '@/ai/flows/generate-accuracy-tips';
-import type { GenerateAccuracyTipsOutput } from '@/ai/flows/generate-accuracy-tips';
-import { summarizeFlower } from '@/ai/flows/summarize-flower-characteristics';
-import type { SummarizeFlowerOutput } from '@/ai/flows/summarize-flower-characteristics';
+// Define types locally to avoid importing from AI flows
+export type GenerateAccuracyTipsOutput = {
+  tips: string[];
+};
+
+export type SummarizeFlowerOutput = {
+  summary: string;
+};
 
 export async function getAccuracyTips(
   flowerType: string
 ): Promise<GenerateAccuracyTipsOutput> {
-  try {
-    const result = await generateAccuracyTips({ flowerType });
-    return result;
-  } catch (error) {
-    console.error('Error generating accuracy tips:', error);
-    // Return a default or empty response in case of failure
-    return { tips: [] };
-  }
+  // Static tips for better photography, no AI required
+  return {
+    tips: [
+      "Ensure the subject is well-lit and in focus.",
+      "Get close to the subject to fill the frame.",
+      "Try to isolate the subject from the background.",
+      "Take photos from different angles.",
+      "Avoid shadows and harsh lighting.",
+    ]
+  };
 }
 
 export async function getFlowerSummary(
   flowerName: string
 ): Promise<SummarizeFlowerOutput> {
-  try {
-    const result = await summarizeFlower({ flowerName });
-    return result;
-  } catch (error) {
-    console.error('Error generating flower summary:', error);
-    return { summary: '' };
-  }
+  // Static summary since we are in offline mode
+  // In a real offline app, you might query a local database here
+  return {
+    summary: `This is identified as ${flowerName}. Please consult a local field guide for detailed botanical information.`
+  };
 }
